@@ -1,0 +1,146 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use CHI;
+use Cwd 'realpath';
+use Data::Dumper;
+use DateTime;
+use File::Basename;
+use File::Temp::Rename;
+use JSON;
+use List::MoreUtils 'none';
+use Net::LastFM;
+
+###########################################################################
+
+my $cache_life      = '12 hours';
+my $cache_label     = 'spotify-lastfm-cache';
+my $cache_rootdir   = sprintf '%s/.cache', dirname(realpath( $0 ));
+my $cache_namespace = basename( realpath( $0 ) );
+
+my @known_lastfm_methods = qw(
+
+  album.addTags album.getInfo album.getTags album.getTopTags album.removeTag
+  album.search
+
+  artist.addTags artist.getCorrection artist.getInfo artist.getSimilar
+  artist.getTags artist.getTopAlbums artist.getTopTags artist.getTopTracks
+  artist.removeTag artist.search
+
+  auth.getMobileSession auth.getSession auth.getToken
+
+  chart.getTopArtists chart.getTopTags chart.getTopTracks
+
+  geo.getTopArtists geo.getTopTracks
+
+  library.getArtists
+
+  tag.getInfo tag.getSimilar tag.getTopAlbums tag.getTopArtists tag.getTopTags
+  tag.getTopTracks tag.getWeeklyChartList
+
+  track.addTags track.getCorrection track.getInfo track.getSimilar
+  track.getTags track.getTopTags track.love track.removeTag track.scrobble
+  track.search track.unlove track.updateNowPlaying
+
+  user.getArtistTracks user.getFriends user.getInfo user.getLovedTracks
+  user.getPersonalTags user.getRecentTracks user.getTopAlbums
+  user.getTopArtists user.getTopTags user.getTopTracks
+  user.getWeeklyAlbumChart user.getWeeklyArtistChart user.getWeeklyChartList
+  user.getWeeklyTrackChart
+
+);
+
+my @methods_wo_user = qw();
+
+###########################################################################
+
+my @err = ();
+
+my @reqd_env = qw(
+  LASTFM_KEY
+  LASTFM_SECRET
+  LASTFM_USER
+  SPOTIFY_ID
+  SPOTIFY_SECRET
+);
+
+for my $check ( @reqd_env ) {
+  push @err, $check
+    unless exists $ENV{$check}
+    && $ENV{$check} ne '';
+}
+
+die "Missing environment variables: @err\n"
+  if @err;
+
+###########################################################################
+
+my $cache = CHI->new(
+  driver     => 'File',
+  root_dir   => $cache_rootdir,
+  label      => $cache_label,
+  namespace  => $cache_namespace,
+  expires_in => $cache_life,
+);
+
+###########################################################################
+
+sub save_json {
+  my ($savefile, $data) = @_;
+  my $json = JSON->new->pretty;
+  my $fh   = File::Temp::Rename->new(FILE => $savefile, CLOBBER => 1);
+  $fh->print($json->encode($get_all));
+
+}
+
+###########################################################################
+
+{
+  my $lastfm;
+
+  sub lastfm {
+    return $lastfm ||= do {
+      $lastfm = Net::LastFM->new(
+        api_key    => $ENV{LASTFM_KEY},
+        api_secret => $ENV{LASTFM_SECRET},
+      );
+      }
+  }
+}
+
+sub lastfm_request {
+  my ( $method, $args ) = @_;
+
+  die "Unrecognized method ($method)"
+    if none { $_ eq $method } @known_lastfm_methods;
+
+  my %req = ( method => $method );
+
+  $req{user} = $ENV{LASTFM_USER}
+    if none { $_ eq $method } @methods_wo_user;
+
+  $req{limit} = $args->{limit}
+    if exists $args->{limit};
+
+  my $res = $cache->compute(
+    \%req,
+    $cache_life,
+    sub { lastfm()->request( %req ) },
+  );
+
+} ## end sub lastfm_request
+
+sub get_loved_tracks {
+  my $method = 'user.getLovedTracks';
+  my $count  = lastfm_request($method, {limit => 1});
+  return lastfm_request($method, {limit => $count->{lovedtracks}{'@attr'}{total}});
+
+}
+
+###########################################################################
+
+my $loved_tracks = get_loved_tracks();
+
+print '?';

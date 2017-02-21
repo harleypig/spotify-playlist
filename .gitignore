@@ -1,3 +1,10 @@
+.cache
+.secrets
+last.fm.loved.tracks
+spotify.playlists
+spotify.profile
+tracks
+
 /blib/
 /.build/
 _build/
